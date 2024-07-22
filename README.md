@@ -1,5 +1,11 @@
 A backtesting software to test trading stategies.
 
+Updates:
+Added new ticker symbols
+Added Bollinger Bands trading strategy
+
+
+
 Process:
 Download stock data from YahooFinance API and save into JSON format
 Using the Python GUI, select the date you want to start from
