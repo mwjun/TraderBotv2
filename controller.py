@@ -3,237 +3,188 @@ import matplotlib.pyplot as plt
 import numpy as np
 from model import StockData
 
-# Dictionary to store registered functions and their calling strings
+# Dictionary to store registered functions
 METHOD = {}
 
-
 def register(name):
-  """Decorator to register passed function name and function to METHOD"""
-
-  def decorator(fn):
-    METHOD[name] = fn
-    return fn
-
-  return decorator
-
+    """Decorator to register passed function name and function to METHOD"""
+    def decorator(fn):
+        METHOD[name] = fn
+        return fn
+    return decorator
 
 def execute(stock_prices, stock_dates, function):
-  """Executes given function call with passed data"""
-  try:
-    fn = METHOD.get(function)
-    if fn:
-      return fn(stock_prices, stock_dates)
-    else:
-      print(f"Method {function} is undefined")
-  except Exception as e:
-    print(f"Error executing {function}: {e}")
-
+    """Executes the selected backtesting function"""
+    try:
+        fn = METHOD.get(function)
+        if fn:
+            print(f"Executing function: {function}")  # Debugging
+            return fn(stock_prices, stock_dates)
+        else:
+            print(f"Method {function} is undefined")
+    except Exception as e:
+        print(f"Error executing {function}: {e}")
 
 @register("stock_chart")
 def plain_chart(stock_prices, stock_dates):
-  """Adds no additional data to the plot"""
-  print("Plain Chart")
-
+    """Plots only stock prices"""
+    print("Displaying Stock Chart...")  # Debugging
+    plt.plot(stock_dates, stock_prices, label="Stock Prices", color="black")
 
 @register("moving_average_backtest")
-def moving_average_backtest(stock_prices,
-                            stock_dates,
-                            short_window=30,
-                            long_window=60):
-  print("MAVG")
-  # Convert prices and dates to python lists
-  price_data = stock_prices.tolist()
-  stock_dates = stock_dates.tolist()
+def moving_average_backtest(stock_prices, stock_dates, short_window=30, long_window=60):
+    """Backtests a moving average strategy with $100,000 initial balance"""
+    print("Running Moving Average Backtest...")  # Debugging
 
-  # Convert price data into a pandas series
-  price_series = pd.Series(price_data)
+    if len(stock_prices) == 0 or len(stock_dates) == 0:
+        print("Error: No stock data available for analysis.")
+        return
 
-  # Calculate short-term and long-term moving averages
-  # Calculates signals indicating when short/long-term moving averages are above/below
-  short_mavg = price_series.rolling(window=short_window, min_periods=1).mean()
-  long_mavg = price_series.rolling(window=long_window, min_periods=1).mean()
-  signals = np.where(short_mavg > long_mavg, -1.0, 1.0)
+    price_series = pd.Series(stock_prices.tolist())
 
-  # Reads buy/sell signals and executes them to zero-sum
-  ctr = 0
-  shares = 0
-  initial_balance = 100000
-  balance = initial_balance
-  date = None
-  prev = 0
-  for price in price_series:
-    date = stock_dates[ctr]
-    if prev == 0:
-      pass
-    elif signals[ctr] < prev:
-      # Buy
-      print(f"buy: {price}")
-      shares = balance // price
-      balance = balance - (price * shares)
-      print(
-        f"Shares bought: {shares}\nNewBalance: {balance}\nDate: {date.strftime('%Y-%m-%d')}\n"
-      )
-    elif signals[ctr] > prev:
-      # Sell
-      print(f"Sell: {price}")
-      if shares != 0:
-        balance += shares * price
-        print(f"Shares Sold: {shares}")
-        shares = 0
-      print(f"NewBalance: {balance}\nDate: {date.strftime('%Y-%m-%d')}\n")
+    # Compute moving averages
+    short_mavg = price_series.rolling(window=short_window, min_periods=1).mean()
+    long_mavg = price_series.rolling(window=long_window, min_periods=1).mean()
+    signals = np.where(short_mavg > long_mavg, -1.0, 1.0)
 
-    prev = signals[ctr]
-    ctr += 1
+    # Trading simulation
+    initial_balance = 100000
+    balance = initial_balance
+    shares = 0
+    prev_signal = 0
 
-  # If there are shares after the algorithm is run, sell remaining shares at last value
-  if shares != 0:
-    balance += shares * price_data[-1]
-    print(
-      f"Sold {shares} remaining shares at {price_data[-1]}\nNew Balance: {balance}\n"
+    for i, price in enumerate(price_series):
+        if signals[i] < prev_signal:  # Buy
+            shares = balance // price
+            balance -= shares * price
+            print(f"BUY: {shares} shares at {price:.2f}")
+        elif signals[i] > prev_signal and shares > 0:  # Sell
+            balance += shares * price
+            print(f"SELL: {shares} shares at {price:.2f}")
+            shares = 0
+        prev_signal = signals[i]
+
+    # Final Sell if shares remain
+    if shares > 0:
+        balance += shares * price_series.iloc[-1]
+        print(f"Final SELL: {shares} shares at {price_series.iloc[-1]:.2f}")
+
+    # Compute returns
+    total_returns = balance - initial_balance
+    percentage_return = (total_returns / initial_balance) * 100
+
+    # Plot stock and moving averages
+    plt.plot(stock_dates, price_series, label="Stock Prices", color="black")
+    plt.plot(stock_dates, short_mavg, label="Short-term MA", color="red", linestyle="--")
+    plt.plot(stock_dates, long_mavg, label="Long-term MA", color="blue", linestyle="--")
+
+    # Display return text
+    plt.text(
+        stock_dates[-1],
+        price_series.iloc[-1],
+        f"Total Return: ${total_returns:.2f}\n% Return: {percentage_return:.2f}%",
+        ha="right",
+        va="top",
+        backgroundcolor="white"
     )
-  total_returns = balance - initial_balance
-  percentage_return = ((balance - initial_balance) / initial_balance) * 100
-
-  # Plot the moving averages
-  plt.plot(stock_dates, short_mavg, label="Short-term MA", color="red")
-  plt.plot(stock_dates, long_mavg, label="Long-term MA", color="blue")
-
-  # Add return text
-  plt.text(
-    stock_dates[-1],
-    stock_prices[-1],
-    f"Total Return: ${total_returns:.2f}\nPercentage Return: {percentage_return:.2f}%",
-    ha="right",
-    va="top",
-    backgroundcolor="white")
-
 
 @register("bollinger_band_backtest")
-def bollinger_band_backtest(stock_prices, stock_dates):
-  print("Bollinger")
+def bollinger_band_backtest(stock_prices, stock_dates, window=20, num_std_dev=2):
+    """Backtests a Bollinger Bands trading strategy with $100,000 initial balance"""
+    print("Running Bollinger Band Backtest...")  # Debugging
 
-  # Predefined data
-  window = 20
-  num_std_dev = 2
-  initial_balance = 100000
+    if len(stock_prices) == 0 or len(stock_dates) == 0:
+        print("Error: No stock data available for analysis.")
+        return
 
-  # Convert price data into a pandas series
-  price_data = stock_prices.tolist()
-  price_series = pd.Series(price_data)
+    price_series = pd.Series(stock_prices.tolist())
 
-  # Calculate rolling mean and standard deviation
-  rolling_mean = price_series.rolling(window=window, min_periods=1).mean()
-  rolling_std = price_series.rolling(window=window, min_periods=1).std()
+    # Compute Bollinger Bands
+    rolling_mean = price_series.rolling(window=window, min_periods=1).mean()
+    rolling_std = price_series.rolling(window=window, min_periods=1).std()
+    upper_band = rolling_mean + num_std_dev * rolling_std
+    lower_band = rolling_mean - num_std_dev * rolling_std
 
-  # Calculate upper and lower Bollinger Bands
-  lower_band = rolling_mean - num_std_dev * rolling_std
-  upper_band = rolling_mean + num_std_dev * rolling_std
+    # Trading simulation
+    initial_balance = 100000
+    balance = initial_balance
+    shares = 0
 
-  # Generate trading signals
-  signals = np.zeros(len(price_data))
-  signals[price_series < lower_band] = 1.0  # Buy signal
-  signals[price_series > upper_band] = -1.0  # Sell signal
+    for i, price in enumerate(price_series):
+        if price < lower_band.iloc[i] and balance >= price:  # Buy
+            shares = balance // price
+            balance -= shares * price
+            print(f"BUY: {shares} shares at {price:.2f}")
+        elif price > upper_band.iloc[i] and shares > 0:  # Sell
+            balance += shares * price
+            print(f"SELL: {shares} shares at {price:.2f}")
+            shares = 0
 
-  # Calculate the adjusted price data (exclude last element) and signals
-  price_data_adjusted = price_data[:-1]
-  signals = signals[:-1]
+    # Final Sell
+    if shares > 0:
+        balance += shares * price_series.iloc[-1]
+        print(f"Final SELL: {shares} shares at {price_series.iloc[-1]:.2f}")
 
-  # Initialize variables to store cumulative returns, stock value, and balance
-  cumulative_returns = np.zeros(len(price_data))
-  balance = initial_balance
-  shares = 0
+    # Compute returns
+    total_returns = balance - initial_balance
+    percentage_return = (total_returns / initial_balance) * 100
 
-  for i, (price, signal) in enumerate(zip(price_data_adjusted, signals)):
-    current_date = stock_dates[i]
+    # Plot stock price and Bollinger Bands
+    plt.plot(stock_dates, price_series, label="Stock Prices", color="black")
+    plt.plot(stock_dates, rolling_mean, label="Rolling Mean", color="orange")
+    plt.plot(stock_dates, upper_band, label="Upper Band", color="green", linestyle="--")
+    plt.plot(stock_dates, lower_band, label="Lower Band", color="red", linestyle="--")
 
-    if signal > 0:
-      # Buy signal
-      if balance >= price:
-        tempval = balance
-        tempval -= price * shares
-        if tempval > 0:
-          shares = shares + (balance // price)
-          balance -= price * shares
-          print(
-            f"Buy {shares:.2f} shares at {price:.2f}, day: {current_date.strftime('%Y-%m-%d')}, balance: {balance:.2f}"
-          )
-        tempval = 0
-      elif price > balance:
-        print(
-          f"Balance too low, skipped buy signal for {current_date.strftime('%Y-%m-%d')}"
-        )
-
-    elif signal < 0:
-      # Sell Signal
-      if shares == 0:
-        print(
-          f"No Shares to sell, skipping sell signal at {current_date.strftime('%Y-%m-%d')}"
-        )
-      else:
-        balance += shares * price
-        print(
-          f"Sell {shares:.2f} shares at {price:.2f}, day: {current_date.strftime('%Y-%m-%d')}, balance: {balance:.2f}"
-        )
-        shares = 0
-
-    cumulative_returns[i] = balance + shares * price
-
-  if shares > 0:
-    # Sell all at end
-    balance = shares * price
-    print(
-      f"Ending, sold {shares:.2f} shares at {price:.2f}, day: {current_date.strftime('%Y-%m-%d')}, balance: {balance:.2f}"
+    # Display return text
+    plt.text(
+        stock_dates[-1],
+        price_series.iloc[-1],
+        f"Total Return: ${total_returns:.2f}\n% Return: {percentage_return:.2f}%",
+        ha="right",
+        va="bottom",
+        backgroundcolor="white"
     )
 
-  total_returns = balance - initial_balance
-  percentage_return = ((balance - initial_balance) / initial_balance) * 100
+def show_stock_chart(stock_symbol, analysis_type="stock_chart", start_date=None):
+    """
+    Displays the stock chart with the selected backtest strategy.
+    If start_date is provided, data is filtered from that date onward.
+    """
 
-  # Plot the Bollinger Bands
-  plt.plot(stock_dates,
-           upper_band,
-           label="Upper Bollinger Band",
-           color="green",
-           linestyle="--")
-  plt.plot(stock_dates,
-           lower_band,
-           label="Lower Bollinger Band",
-           color="orange",
-           linestyle="--")
+    print(f"🔍 Fetching stock data for: {stock_symbol} from JSON...")
+    if start_date:
+        print(f"Date filter provided => {start_date}")  # Debugging
 
-  plt.text(
-    stock_dates[-1],
-    stock_prices[-1],
-    f"Total Return: ${total_returns:.2f}\nPercentage Return: {percentage_return:.2f}%",
-    ha="right",
-    va="bottom",
-    color="black",
-    backgroundcolor="white")
+    stock = StockData(stock_symbol)
 
+    # If a date was passed, filter from that date onward
+    stock_data = stock.get_frame(start_date)
 
-def show_stock_chart(stock_symbol, analysis_type="stock_chart", date=None):
-  stock = StockData(stock_symbol)
-  if date:
-    stock_dates = stock.get_frame(date).index
-    stock_prices = stock.get_frame(date)["Close"].values
-  else:
-    stock_dates = stock.get_frame().index
-    stock_prices = stock.get_frame()["Close"].values
+    if stock_data.empty:
+        print(f"❌ Error: No data found for {stock_symbol}.")
+        return
 
-  # Build the base plot
-  plt.plot(stock_dates, stock_prices)
-  plt.xlabel("Date")
-  plt.ylabel("Price")
-  plt.title(f"Stock Activity for {stock_symbol}")
-  plt.grid(True)
+    # Extract arrays for backtesting
+    stock_dates = stock_data.index
+    stock_prices = stock_data["Close"].values
 
-  # Decorator to build extra plot data
-  execute(stock_prices, stock_dates, analysis_type)
+    print(f"📊 Loaded {len(stock_dates)} data points for {stock_symbol}.")  # Debugging
+    print(f"📅 First Date: {stock_dates[0]}, Last Date: {stock_dates[-1]}")  # Debugging
 
-  # Display the legend and finally show the finished graph
-  plt.legend()
-  plt.show()
+    # If there's no data in the selected range
+    if len(stock_dates) == 0 or len(stock_prices) == 0:
+        print("❌ No data available for the selected stock or date range.")
+        return
 
+    # Clear figure before plotting new chart
+    plt.figure(figsize=(12, 6))
+    plt.clf()
 
-if __name__ == "__main__":
-  # Example usage:
-  show_stock_chart("AAPL", analysis_type="moving_average_backtest")
+    # Execute selected backtesting strategy
+    execute(stock_prices, stock_dates, analysis_type)
+
+    # Ensure the figure updates
+    plt.legend()
+    plt.draw()
+    plt.pause(0.01)  # Small delay to force update
+    plt.show(block=True)  # Keep the window open

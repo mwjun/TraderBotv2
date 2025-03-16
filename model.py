@@ -5,111 +5,107 @@ from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
 
 class StockData:
-  """
-  Handles loading and downloading stock data from yfinance
-  """
-
-  def __init__(self, ticker='FNGU'):
-    self.ticker = ticker
-    self.panData = None
-    self.update()
-
-  def update(self):
     """
-    Downloads stock data from January 1st, 2020 to yesterday
+    Handles loading, storing, and retrieving stock data from JSON.
+    If data is not found, it downloads from Yahoo Finance.
     """
-    yesterday = datetime.today() - timedelta(days=1)
-    self.panData = yf.download(tickers=self.ticker,
-                               start='2020-01-01',
-                               end=yesterday,
-                               progress=False)
-    self.clean()
-    self.save_data()
 
-  def clean(self):
-    """
-    Drops the {Adj Close} column from downloaded data, as it is not necessary
-    """
-    self.panData.drop(columns=['Adj Close'], inplace=True)
+    def __init__(self, ticker='FNGU'):
+        self.ticker = ticker
+        self.data_path = f"./data/{self.ticker}.json"
+        self.panData = None
+        self.load_data()
 
-  def save_data(self):
-    """
-    If {./data/} does not exist, create the directory.
-    Save the current ticker's downloaded data as a JSON file in ./data
-    """
-    if not os.path.exists("data"):
-      os.makedirs("data")
-    file_path = f"./data/{self.ticker}.json"
-    self.panData.to_json(file_path, date_format='iso')
+    def load_data(self):
+        """
+        Loads stock data from a JSON file if available, otherwise downloads it.
+        """
+        if os.path.exists(self.data_path):
+            print(f"✅ Loading existing data for {self.ticker} from JSON...")
+            try:
+                self.panData = pd.read_json(self.data_path)
+                self.clean_data()
+            except Exception as e:
+                print(f"❌ Error reading JSON file: {e}. Downloading new data...")
+                self.update()
+        else:
+            print(f"❌ No stored data for {self.ticker}. Downloading from Yahoo Finance...")
+            self.update()
 
-  def print_table(self):
-    """
-    Prints the contents of the current pandas dataframe
-    """
-    print(self.panData)
+    def update(self):
+        """
+        Downloads stock data from January 1st, 2020 to yesterday and saves it as JSON.
+        """
+        yesterday = datetime.today() - timedelta(days=1)
+        self.panData = yf.download(
+            tickers=self.ticker,
+            start='2020-01-01',
+            end=yesterday,
+            progress=False,
+            auto_adjust=False
+        )
 
-  def get_frame(self, date=None):
-    """
-    Returns a copy of the loaded dataframe
-    If a date is given, return a copy of the dataframe from {date} to yesterday
-    """
-    if date:
-      selected_date = pd.to_datetime(date)
-      copy = self.panData.loc[selected_date:]
-    else:
-      copy = self.panData.copy()
-    return copy
+        if self.panData.empty:
+            print(f"❌ Failed to download data for {self.ticker}. Check ticker symbol.")
+            return
 
-  def get_ticker(self):
-    """
-    Returns the current loaded ticker symbol
-    """
-    return self.ticker
+        print(f"📥 Downloaded Data Columns: {self.panData.columns}")  # Debugging
 
-  def set_ticker(self, new_ticker):
-    """
-    Sets a new ticker symbol and calls update
-    """
-    self.ticker = new_ticker
-    self.update()
-# Interface for data update related methods
-class DataUpdater(ABC):
+        # Extract only 'Close' column and flatten MultiIndex if necessary
+        if isinstance(self.panData.columns, pd.MultiIndex):
+            self.panData = self.panData['Close']
+        else:
+            self.panData = self.panData[['Close']]
 
-  @abstractmethod
-  def Update(self):
-        pass
+        # Rename column properly to ensure consistency
+        self.panData.columns = ['Close']
 
-  @abstractmethod
-  def Clean(self):
-        pass
+        self.clean_data()
+        self.save_data()
 
-#interface for data saving related methods are here defined in the class 
+    def clean_data(self):
+        """
+        Converts all data to numeric and ensures proper format.
+        """
+        print("🧹 Cleaning Data...")
 
-# Interface for data saving related methods
-class DataSaver(ABC):
+        # Ensure data is numeric and drop missing values
+        self.panData = self.panData.apply(pd.to_numeric, errors='coerce')
+        self.panData.dropna(inplace=True)
 
-  @abstractmethod
-  def SaveData(self):
-    pass
+        print("✅ Data cleaned successfully!")
 
-    # StockData class now implements the DataUpdater and DataSaver interfaces
-class StockDataUpdater(DataUpdater):
+    def save_data(self):
+        """
+        Saves the current ticker's downloaded data as a JSON file in ./data.
+        """
+        os.makedirs("data", exist_ok=True)
+        self.panData.to_json(self.data_path, date_format='iso')
+        print(f"✅ Data saved to {self.data_path}")
 
-  def Update(self):
-      self.panData = yf.download(tickers=self.ticker,
-                                 start='2020-01-01',
-                                 end=self.yesterday,
-                                 progress=False)
-      self.Clean()
+    def get_frame(self, date=None):
+        """
+        Returns a copy of the stored dataframe.
+        If a date is given, returns a filtered dataframe from that date onward.
+        """
+        if self.panData is None or self.panData.empty:
+            print(f"❌ Error: No stock data available for {self.ticker}.")
+            return pd.DataFrame()
 
-  def Clean(self):
-      self.panData = self.panData.drop(columns=['Adj Close'])
+        if 'Close' not in self.panData.columns:
+            print(f"❌ 'Close' column missing in data. Available columns: {self.panData.columns}")
+            return pd.DataFrame()
 
-class StockDataSaver(DataSaver):
+        if date:
+            selected_date = pd.to_datetime(date)
+            return self.panData.loc[selected_date:]
+        return self.panData.copy()
 
-  def SaveData(self):
-      createdDir = os.path.exists("data")
-      if not createdDir:
-          os.makedirs("data")
-      f = open(f"./data/{self.ticker}.json", 'w+')
-      self.panData.to_json(f, date_format='iso')
+    def get_ticker(self):
+        """Returns the current loaded ticker symbol"""
+        return self.ticker
+
+    def set_ticker(self, new_ticker):
+        """Sets a new ticker symbol and loads data for it"""
+        self.ticker = new_ticker
+        self.load_data()
